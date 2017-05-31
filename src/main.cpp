@@ -43,7 +43,7 @@ DEFINE_DISCRIMINATED_UNION(LispValue, DISC_MAC)
 				ASSERT(count == 2);                                                      \
 				ASSERT(vals[0].IsLispNumValue());                                        \
 				ASSERT(vals[1].IsLispNumValue());                                        \
-				BNSexprNumber num = 0.0;                                                 \
+				LispNumValue num = 0.0;                                                  \
 				if (vals[0].AsLispNumValue().isFloat || vals[1].AsLispNumValue().isFloat) {                  \
 					num = vals[0].AsLispNumValue().CoerceDouble() op vals[1].AsLispNumValue().CoerceDouble();\
 				}              \
@@ -58,6 +58,15 @@ MATH_BUILTIN_OP(Div, /)
 MATH_BUILTIN_OP(Add, +)
 MATH_BUILTIN_OP(Sub, -)
 
+void StringBuiltin_cmp(LispValue* vals, int count, LispValue* outVal) {
+	ASSERT(count == 2);
+	ASSERT(vals[0].IsLispStringValue());
+	ASSERT(vals[1].IsLispStringValue());
+	int len = BNS_MIN(vals[0].AsLispStringValue().value.length, vals[1].AsLispStringValue().value.length);
+	LispNumValue num = strncmp(vals[0].AsLispStringValue().value.start, vals[1].AsLispStringValue().value.start, len);
+	*outVal = num;
+}
+
 struct BuiltinBinding {
 	const char* name;
 	BuiltinFuncOp* func;
@@ -67,7 +76,8 @@ BuiltinBinding defaultBindings[] = {
 	{ "*", MathBuiltin_Mul },
 	{ "/", MathBuiltin_Div },
 	{ "+", MathBuiltin_Add },
-	{ "-", MathBuiltin_Sub }
+	{ "-", MathBuiltin_Sub },
+	{ "strcmp", StringBuiltin_cmp }
 };
 
 struct LispBinding {
