@@ -10,7 +10,7 @@ typedef void (BuiltinFuncOp)(LispValue*, int, LispValue*);
 
 struct LispLambdaValue {
 	Vector<SubString> argNames;
-	BNSexpr* body;
+	BNSexpr body;
 };
 
 struct LispBuiltinFuncValue {
@@ -138,6 +138,38 @@ void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 						binding.value = val;
 						ctx->bindings.PushBack(binding);
 					}
+					else if (children.data[1].IsBNSexprParenList()) {
+						LispLambdaValue val;
+						const Vector<BNSexpr>& grandChildren = children.data[1].AsBNSexprParenList().children;
+						if (grandChildren.count > 0) {
+							bool allIdentifiers = true;
+							BNS_VEC_FOREACH(grandChildren) {
+								if (!ptr->IsBNSexprIdentifier()) {
+									allIdentifiers = false;
+									break;
+								}
+							}
+
+							if (allIdentifiers) {
+								LispBinding binding;
+								binding.name = grandChildren.data[0].AsBNSexprIdentifier().identifier;
+
+								val.argNames.EnsureCapacity(grandChildren.count - 1);
+								for (int i = 1; i < grandChildren.count; i++) {
+									val.argNames.PushBack(grandChildren.data[i].AsBNSexprIdentifier().identifier);
+								}
+								val.body = children.data[2];
+								binding.value = val;
+								ctx->bindings.PushBack(binding);
+							}
+							else {
+								ASSERT(false);
+							}
+						}
+						else {
+							ASSERT(false);
+						}
+					}
 					else {
 						ASSERT(false);
 					}
@@ -163,8 +195,26 @@ void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 					ctx->evalStack.PushBack(result);
 				}
 				else if (func.IsLispLambdaValue()) {
-					// TODO:
-					ASSERT(false);
+					int arity = func.AsLispLambdaValue().argNames.count;
+					int argCount = ctx->evalStack.count - idx - 1;
+					if (arity == argCount) {
+						int prevCount = ctx->bindings.count;
+						for (int i = 0; i < arity; i++) {
+							LispBinding binding;
+							binding.name = func.AsLispLambdaValue().argNames.data[i];
+							binding.value = ctx->evalStack.data[idx + 1 + i];
+							ctx->bindings.PushBack(binding);
+						}
+
+						ctx->evalStack.RemoveRange(idx, ctx->evalStack.count);
+
+						EvalSexpr(&func.AsLispLambdaValue().body, ctx);
+
+						ctx->bindings.RemoveRange(prevCount, ctx->bindings.count);
+					}
+					else {
+						ASSERT(false);
+					}
 				}
 				else {
 					ASSERT(false);
@@ -225,6 +275,14 @@ void PrintLispValue(LispValue* val, FILE* file = stdout) {
 
 int main(){
 	LispEvalContext ctx;
+
+	//Vector<BNSexpr> sexprs;
+	//ParseSexprs(&sexprs, "(define (sqr x) (* x x))");
+	//
+	//EvalSexprs(&sexprs, &ctx);
+	//
+	//return 0;
+
 	while (true) {
 		printf("Enter something:\n");
 		char userIn[256];
@@ -233,8 +291,6 @@ int main(){
 
 		Vector<BNSexpr> sexprs;
 		ParseSexprs(&sexprs, userIn);
-
-		ASSERT(sexprs.count == 1);
 
 		EvalSexprs(&sexprs, &ctx);
 
