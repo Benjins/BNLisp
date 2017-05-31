@@ -4,19 +4,51 @@
 #include "../CppUtils/strings.h"
 #include "../CppUtils/sexpr.h"
 
-typedef void (BuiltinFuncOp)(BNSexpr**, int, BNSexpr*);
+struct LispValue;
 
-#define MATH_BUILTIN_OP(name, op)                                                    \
-			void MathBuiltin_ ## name (BNSexpr** vals, int count, BNSexpr* outVal) { \
-				ASSERT(count == 2);                                                  \
-				ASSERT(vals[0]->IsBNSexprNumber());                                  \
-				ASSERT(vals[1]->IsBNSexprNumber());                                  \
-				BNSexprNumber num = 0.0;                                                   \
-				if (vals[0]->AsBNSexprNumber().isFloat || vals[1]->AsBNSexprNumber().isFloat) {                  \
-					num = vals[0]->AsBNSexprNumber().CoerceDouble() op vals[1]->AsBNSexprNumber().CoerceDouble();\
+typedef void (BuiltinFuncOp)(LispValue*, int, LispValue*);
+
+struct LispLambdaValue {
+	Vector<SubString> argNames;
+	BNSexpr* body;
+};
+
+struct LispBuiltinFuncValue {
+	BuiltinFuncOp* func;
+	LispBuiltinFuncValue(BuiltinFuncOp* _func) { func = _func; }
+};
+
+typedef BNSexprNumber     LispNumValue;
+typedef BNSexprString     LispStringValue;
+typedef BNSexprIdentifier LispIdentifierValue;
+
+struct LispVoidValue {
+
+};
+
+#define DISC_MAC(mac)    \
+	mac(LispLambdaValue) \
+	mac(LispBuiltinFuncValue) \
+	mac(LispNumValue) \
+	mac(LispIdentifierValue) \
+	mac(LispVoidValue) \
+	mac(LispStringValue)
+
+DEFINE_DISCRIMINATED_UNION(LispValue, DISC_MAC)
+
+#undef DISC_MAC
+
+#define MATH_BUILTIN_OP(name, op)                                                        \
+			void MathBuiltin_ ## name (LispValue* vals, int count, LispValue* outVal) {  \
+				ASSERT(count == 2);                                                      \
+				ASSERT(vals[0].IsLispNumValue());                                        \
+				ASSERT(vals[1].IsLispNumValue());                                        \
+				BNSexprNumber num = 0.0;                                                 \
+				if (vals[0].AsLispNumValue().isFloat || vals[1].AsLispNumValue().isFloat) {                  \
+					num = vals[0].AsLispNumValue().CoerceDouble() op vals[1].AsLispNumValue().CoerceDouble();\
 				}              \
 				else {         \
-					num = vals[0]->AsBNSexprNumber().iValue op vals[1]->AsBNSexprNumber().iValue;                \
+					num = vals[0].AsLispNumValue().iValue op vals[1].AsLispNumValue().iValue;                \
 				}              \
 				*outVal = num; \
 			}
@@ -38,27 +70,43 @@ BuiltinBinding defaultBindings[] = {
 	{ "-", MathBuiltin_Sub }
 };
 
-struct LispEvalContext {
-	Vector<BNSexpr*> evalStack;
-	Vector<BuiltinBinding> builtinBindings;
-	Vector<BNSexpr> evalAllocs;
-	LispEvalContext() {
-		builtinBindings.InsertArray(0, defaultBindings, BNS_ARRAY_COUNT(defaultBindings));
+struct LispBinding {
+	String name;
+	LispValue value;
+};
 
-		// TODO: Eval needs to be better than this...
-		evalAllocs.EnsureCapacity(1000 * 1000);
+struct LispEvalContext {
+	Vector<LispValue> evalStack;
+	Vector<LispBinding> bindings;
+	LispEvalContext() {
+		for (int i = 0; i < BNS_ARRAY_COUNT(defaultBindings); i++) {
+			LispValue val;
+			val = LispBuiltinFuncValue(defaultBindings[i].func);
+
+			LispBinding bind;
+			bind.name = defaultBindings[i].name;
+			bind.value = val;
+
+			bindings.PushBack(bind);
+		}
 	}
 };
 
-BuiltinFuncOp* GetBuiltinBindingForIdentifier(BNSexpr* sexpr, LispEvalContext* ctx) {
-	ASSERT(sexpr->IsBNSexprIdentifier());
-	BNS_VEC_FOREACH(ctx->builtinBindings) {
-		if (sexpr->AsBNSexprIdentifier().identifier == ptr->name) {
-			return ptr->func;
+LispValue GetBindingForIdentifier(const SubString& name, LispEvalContext* ctx) {
+	BNS_VEC_FOREACH(ctx->bindings) {
+		if (name == ptr->name) {
+			return ptr->value;
 		}
 	}
 
-	return nullptr;
+	LispValue val;
+	val = LispVoidValue();
+	return val;
+}
+
+LispValue GetBindingForIdentifier(BNSexpr* sexpr, LispEvalContext* ctx) {
+	ASSERT(sexpr->IsBNSexprIdentifier());
+	return GetBindingForIdentifier(sexpr->AsBNSexprIdentifier().identifier, ctx);
 }
 
 void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
@@ -68,22 +116,42 @@ void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 			EvalSexpr(ptr, ctx);
 		}
 
-		if (ctx->evalStack.count > idx && ctx->evalStack.data[idx]->IsBNSexprIdentifier()) {
-			BuiltinFuncOp* func = GetBuiltinBindingForIdentifier(ctx->evalStack.data[idx], ctx);
-			ASSERT(func != nullptr);
-			BNSexpr result;
-			func(&ctx->evalStack.data[idx + 1], ctx->evalStack.count - idx - 1, &result);
-			ctx->evalStack.RemoveRange(idx, ctx->evalStack.count);
-			ctx->evalAllocs.PushBack(result);
-			BNSexpr* stkResult = &ctx->evalAllocs.Back();
-			ctx->evalStack.PushBack(stkResult);
+		if (ctx->evalStack.count > idx) {
+			LispValue func = ctx->evalStack.data[idx];
+			if (func.IsLispBuiltinFuncValue()) {
+				LispValue result;
+				func.AsLispBuiltinFuncValue().func(&ctx->evalStack.data[idx + 1], ctx->evalStack.count - idx - 1, &result);
+				ctx->evalStack.RemoveRange(idx, ctx->evalStack.count);
+				ctx->evalStack.PushBack(result);
+			}
+			else if (func.IsLispLambdaValue()) {
+				// TODO:
+				ASSERT(false);
+			}
+			else {
+				ASSERT(false);
+			}
 		}
 		else {
 			ASSERT(false);
 		}
 	}
+	else if (sexpr->IsBNSexprIdentifier()) {
+		LispValue val = GetBindingForIdentifier(sexpr, ctx);
+		ctx->evalStack.PushBack(val);
+	}
+	else if (sexpr->IsBNSexprNumber()) {
+		LispValue val;
+		val = sexpr->AsBNSexprNumber();
+		ctx->evalStack.PushBack(val);
+	}
+	else if (sexpr->IsBNSexprString()) {
+		LispValue val;
+		val = sexpr->AsBNSexprString();
+		ctx->evalStack.PushBack(val);
+	}
 	else {
-		ctx->evalStack.PushBack(sexpr);
+		ASSERT(false);
 	}
 }
 
@@ -93,16 +161,16 @@ void EvalSexprs(Vector<BNSexpr>* sexprs, LispEvalContext* ctx) {
 	}
 }
 
-void PrintSexpr(BNSexpr* sexpr, FILE* file = stdout) {
-	if (sexpr->IsBNSexprString()) {
-		fprintf(file, "\"%.*s\"", BNS_LEN_START(sexpr->AsBNSexprString().value));
+void PrintLispValue(LispValue* val, FILE* file = stdout) {
+	if (val->IsLispStringValue()) {
+		fprintf(file, "\"%.*s\"", BNS_LEN_START(val->AsLispStringValue().value));
 	}
-	else if (sexpr->IsBNSexprNumber()) {
-		if (sexpr->AsBNSexprNumber().isFloat) {
-			fprintf(file, "%f", sexpr->AsBNSexprNumber().fValue);
+	else if (val->IsLispNumValue()) {
+		if (val->AsLispNumValue().isFloat) {
+			fprintf(file, "%f", val->AsLispNumValue().fValue);
 		}
 		else {
-			fprintf(file, "%lld", sexpr->AsBNSexprNumber().iValue);
+			fprintf(file, "%lld", val->AsLispNumValue().iValue);
 		}
 	}
 	else {
@@ -134,12 +202,11 @@ int main(){
 		ASSERT(ctx.evalStack.count == sexprs.count);
 
 		BNS_VEC_FOREACH(ctx.evalStack) {
-			PrintSexpr(*ptr);
+			PrintLispValue(ptr);
 			printf("\n");
 		}
 
 		ctx.evalStack.Clear();
-		ctx.evalAllocs.Clear();
 	}
 
 	return 0;
