@@ -121,29 +121,58 @@ LispValue GetBindingForIdentifier(BNSexpr* sexpr, LispEvalContext* ctx) {
 
 void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 	if (sexpr->IsBNSexprParenList()) {
-		int idx = ctx->evalStack.count;
-		BNS_VEC_FOREACH(sexpr->AsBNSexprParenList().children){
-			EvalSexpr(ptr, ctx);
+
+		const Vector<BNSexpr>& children = sexpr->AsBNSexprParenList().children;
+		bool isDefine = false;
+		if (children.count > 0) {
+			if (children.data[0].IsBNSexprIdentifier()
+			 && children.data[0].AsBNSexprIdentifier().identifier == "define") {
+				isDefine = true;
+				if (children.count == 3) {
+					if (children.data[1].IsBNSexprIdentifier()) {
+						EvalSexpr(&children.data[2], ctx);
+						LispValue val = ctx->evalStack.Back();
+						ctx->evalStack.PopBack();
+						LispBinding binding;
+						binding.name = children.data[1].AsBNSexprIdentifier().identifier;
+						binding.value = val;
+						ctx->bindings.PushBack(binding);
+					}
+					else {
+						ASSERT(false);
+					}
+				}
+				else {
+					ASSERT(false);
+				}
+			}
 		}
 
-		if (ctx->evalStack.count > idx) {
-			LispValue func = ctx->evalStack.data[idx];
-			if (func.IsLispBuiltinFuncValue()) {
-				LispValue result;
-				func.AsLispBuiltinFuncValue().func(&ctx->evalStack.data[idx + 1], ctx->evalStack.count - idx - 1, &result);
-				ctx->evalStack.RemoveRange(idx, ctx->evalStack.count);
-				ctx->evalStack.PushBack(result);
+		if (!isDefine) {
+			int idx = ctx->evalStack.count;
+			BNS_VEC_FOREACH(sexpr->AsBNSexprParenList().children) {
+				EvalSexpr(ptr, ctx);
 			}
-			else if (func.IsLispLambdaValue()) {
-				// TODO:
-				ASSERT(false);
+
+			if (ctx->evalStack.count > idx) {
+				LispValue func = ctx->evalStack.data[idx];
+				if (func.IsLispBuiltinFuncValue()) {
+					LispValue result;
+					func.AsLispBuiltinFuncValue().func(&ctx->evalStack.data[idx + 1], ctx->evalStack.count - idx - 1, &result);
+					ctx->evalStack.RemoveRange(idx, ctx->evalStack.count);
+					ctx->evalStack.PushBack(result);
+				}
+				else if (func.IsLispLambdaValue()) {
+					// TODO:
+					ASSERT(false);
+				}
+				else {
+					ASSERT(false);
+				}
 			}
 			else {
 				ASSERT(false);
 			}
-		}
-		else {
-			ASSERT(false);
 		}
 	}
 	else if (sexpr->IsBNSexprIdentifier()) {
@@ -208,8 +237,6 @@ int main(){
 		ASSERT(sexprs.count == 1);
 
 		EvalSexprs(&sexprs, &ctx);
-
-		ASSERT(ctx.evalStack.count == sexprs.count);
 
 		BNS_VEC_FOREACH(ctx.evalStack) {
 			PrintLispValue(ptr);
