@@ -103,9 +103,9 @@ struct LispEvalContext {
 };
 
 LispValue GetBindingForIdentifier(const SubString& name, LispEvalContext* ctx) {
-	BNS_VEC_FOREACH(ctx->bindings) {
-		if (name == ptr->name) {
-			return ptr->value;
+	for (int i = ctx->bindings.count - 1; i >= 0; i--) {
+		if (name == ctx->bindings.data[i].name) {
+			return ctx->bindings.data[i].value;
 		}
 	}
 
