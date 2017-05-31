@@ -276,18 +276,15 @@ void PrintLispValue(LispValue* val, FILE* file = stdout) {
 int main(){
 	LispEvalContext ctx;
 
-	//Vector<BNSexpr> sexprs;
-	//ParseSexprs(&sexprs, "(define (sqr x) (* x x))");
-	//
-	//EvalSexprs(&sexprs, &ctx);
-	//
-	//return 0;
-
 	while (true) {
 		printf("Enter something:\n");
 		char userIn[256];
 		fgets(userIn, sizeof(userIn), stdin);
 		userIn[StrLen(userIn) - 1] = '\0';
+
+		if (StrEqual(userIn, "!quit")) {
+			break;
+		}
 
 		Vector<BNSexpr> sexprs;
 		ParseSexprs(&sexprs, userIn);
