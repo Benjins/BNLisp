@@ -88,6 +88,20 @@ struct LispBinding {
 struct LispEvalContext {
 	Vector<LispValue> evalStack;
 	Vector<LispBinding> bindings;
+
+	Vector<int> bindingCountFrames;
+
+	void PushFrame() {
+		bindingCountFrames.PushBack(bindings.count);
+	}
+
+	void PopFrame() {
+		int prevCount = bindingCountFrames.Back();
+		bindingCountFrames.PopBack();
+		ASSERT(prevCount <= bindings.count);
+		bindings.RemoveRange(prevCount, bindings.count);
+	}
+
 	LispEvalContext() {
 		for (int i = 0; i < BNS_ARRAY_COUNT(defaultBindings); i++) {
 			LispValue val;
@@ -123,11 +137,11 @@ void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 	if (sexpr->IsBNSexprParenList()) {
 
 		const Vector<BNSexpr>& children = sexpr->AsBNSexprParenList().children;
-		bool isDefine = false;
+		bool specialCase = false;
 		if (children.count > 0) {
 			if (children.data[0].IsBNSexprIdentifier()
 			 && children.data[0].AsBNSexprIdentifier().identifier == "define") {
-				isDefine = true;
+				specialCase = true;
 				if (children.count == 3) {
 					if (children.data[1].IsBNSexprIdentifier()) {
 						EvalSexpr(&children.data[2], ctx);
@@ -178,9 +192,28 @@ void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 					ASSERT(false);
 				}
 			}
+			else if (children.data[0].IsBNSexprIdentifier()
+				&& children.data[0].AsBNSexprIdentifier().identifier == "begin") {
+				specialCase = true;
+				ctx->PushFrame();
+
+				int stackCount = ctx->evalStack.count;
+				for (int i = 1; i < children.count - 1; i++) {
+					EvalSexpr(&children.data[i], ctx);
+					ctx->evalStack.RemoveRange(stackCount, ctx->evalStack.count);
+				}
+				
+				EvalSexpr(&children.data[children.count - 1], ctx);
+
+				ctx->PopFrame();
+			}
+			else if (children.data[0].IsBNSexprIdentifier()
+				&& children.data[0].AsBNSexprIdentifier().identifier == "if") {
+				// TODO: booleans and stuff
+			}
 		}
 
-		if (!isDefine) {
+		if (!specialCase) {
 			int idx = ctx->evalStack.count;
 			BNS_VEC_FOREACH(sexpr->AsBNSexprParenList().children) {
 				EvalSexpr(ptr, ctx);
@@ -215,6 +248,9 @@ void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 					else {
 						ASSERT(false);
 					}
+				}
+				else if (func.IsLispVoidValue()) {
+					printf("Error, unbound identifier\n");
 				}
 				else {
 					ASSERT(false);
