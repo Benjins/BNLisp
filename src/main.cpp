@@ -5,12 +5,14 @@
 #include "../CppUtils/sexpr.h"
 
 struct LispValue;
+struct LispBinding;
 
 typedef void (BuiltinFuncOp)(LispValue*, int, LispValue*);
 
 struct LispLambdaValue {
 	Vector<SubString> argNames;
 	BNSexpr body;
+	Vector<LispBinding> closureBindings;
 };
 
 struct LispBuiltinFuncValue {
@@ -133,6 +135,26 @@ LispValue GetBindingForIdentifier(BNSexpr* sexpr, LispEvalContext* ctx) {
 	return GetBindingForIdentifier(sexpr->AsBNSexprIdentifier().identifier, ctx);
 }
 
+void GetClosureBindings(BNSexpr* funcBody, LispEvalContext* ctx, Vector<LispBinding>* outClosureBindings) {
+	if (funcBody->IsBNSexprIdentifier()) {
+		const SubString& name = funcBody->AsBNSexprIdentifier().identifier;
+		if (name != "begin" && name != "define") {
+			LispValue val = GetBindingForIdentifier(name, ctx);
+			if (!val.IsLispVoidValue()) {
+				LispBinding bind;
+				bind.name = name;
+				bind.value = val;
+				outClosureBindings->PushBack(bind);
+			}
+		}
+	}
+	else if (funcBody->IsBNSexprParenList()) {
+		BNS_VEC_FOREACH(funcBody->AsBNSexprParenList().children) {
+			GetClosureBindings(ptr, ctx, outClosureBindings);
+		}
+	}
+}
+
 void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 	if (sexpr->IsBNSexprParenList()) {
 
@@ -173,6 +195,7 @@ void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 									val.argNames.PushBack(grandChildren.data[i].AsBNSexprIdentifier().identifier);
 								}
 								val.body = children.data[2];
+								GetClosureBindings(&val.body, ctx, &val.closureBindings);
 								binding.value = val;
 								ctx->bindings.PushBack(binding);
 							}
@@ -232,6 +255,12 @@ void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 					int argCount = ctx->evalStack.count - idx - 1;
 					if (arity == argCount) {
 						int prevCount = ctx->bindings.count;
+
+						// Put closures on first, so args can override them
+						BNS_VEC_FOREACH(func.AsLispLambdaValue().closureBindings) {
+							ctx->bindings.PushBack(*ptr);
+						}
+
 						for (int i = 0; i < arity; i++) {
 							LispBinding binding;
 							binding.name = func.AsLispLambdaValue().argNames.data[i];
