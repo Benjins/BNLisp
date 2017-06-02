@@ -1,1 +1,5 @@
 (define (fac n) (if n (* n (fac (- n 1))) 1))
+
+(define (fac_f n)(begin (define (fac_i num tot) (if num (fac_i (- num 1) (* num tot)) tot)) (fac_i n 1)))
+
+(fac_f 12)
