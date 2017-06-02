@@ -138,7 +138,7 @@ LispValue GetBindingForIdentifier(BNSexpr* sexpr, LispEvalContext* ctx) {
 void GetClosureBindings(BNSexpr* funcBody, LispEvalContext* ctx, Vector<LispBinding>* outClosureBindings) {
 	if (funcBody->IsBNSexprIdentifier()) {
 		const SubString& name = funcBody->AsBNSexprIdentifier().identifier;
-		if (name != "begin" && name != "define") {
+		if (name != "begin" && name != "define" && name != "if") {
 			LispValue val = GetBindingForIdentifier(name, ctx);
 			if (!val.IsLispVoidValue()) {
 				LispBinding bind;
@@ -198,6 +198,7 @@ void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 								GetClosureBindings(&val.body, ctx, &val.closureBindings);
 								binding.value = val;
 								ctx->bindings.PushBack(binding);
+								ctx->bindings.Back().value.AsLispLambdaValue().closureBindings.PushBack(binding);
 							}
 							else {
 								ASSERT(false);
@@ -232,7 +233,22 @@ void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 			}
 			else if (children.data[0].IsBNSexprIdentifier()
 				&& children.data[0].AsBNSexprIdentifier().identifier == "if") {
-				// TODO: booleans and stuff
+				specialCase = true;
+				ASSERT(children.count == 4);
+				BNSexpr* condExpr = &children.data[1];
+				BNSexpr* thenExpr = &children.data[2];
+				BNSexpr* elseExpr = &children.data[3];
+
+				EvalSexpr(condExpr, ctx);
+				LispValue ifRes = ctx->evalStack.Back();
+				ctx->evalStack.PopBack();
+
+				if (ifRes.IsLispNumValue() && !ifRes.AsLispNumValue().isFloat && ifRes.AsLispNumValue().iValue == 0) {
+					EvalSexpr(elseExpr, ctx);
+				}
+				else {
+					EvalSexpr(thenExpr, ctx);
+				}
 			}
 		}
 
@@ -338,8 +354,24 @@ void PrintLispValue(LispValue* val, FILE* file = stdout) {
 #include "../CppUtils/vector.cpp"
 #include "../CppUtils/sexpr.cpp"
 
-int main(){
+int main(int argc, char** argv){
 	LispEvalContext ctx;
+
+	for (int i = 1; i < argc; i++) {
+		String fileContents = ReadStringFromFile(argv[i]);
+
+		Vector<BNSexpr> sexprs;
+		ParseSexprs(&sexprs, fileContents);
+
+		EvalSexprs(&sexprs, &ctx);
+
+		BNS_VEC_FOREACH(ctx.evalStack) {
+			PrintLispValue(ptr);
+			printf("\n");
+		}
+
+		ctx.evalStack.Clear();
+	}
 
 	while (true) {
 		printf("Enter something:\n");
