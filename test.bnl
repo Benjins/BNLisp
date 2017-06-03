@@ -1,4 +1,4 @@
-(define (fac n) (if (= n 0) 1 (* n (fac (- n 1)))))
+(define (fac n) (if (= n 0) 1 (* n (fac (- n 1)))))	
 
 (define (fac_f n)(begin (define (fac_i num tot) (if (= num 0) tot (fac_i (- num 1) (* num tot)))) (fac_i n 1)))
 
@@ -40,3 +40,7 @@
 	    (cons (f (car l))
 		      (map (cdr l) f))
 	    l))
+
+(defmacro (id a) a)
+(defmacro (and a b) (cons `if (cons a (cons b (cons `false 0)))))
+(defmacro (or a b) (cons `if (cons a (cons `true (cons b 0)))))

@@ -15,6 +15,13 @@ struct LispLambdaValue {
 	Vector<LispBinding> closureBindings;
 };
 
+struct LispMacro {
+	SubString name;
+	Vector<SubString> argNames;
+	BNSexpr body;
+	Vector<LispBinding> closureBindings;
+};
+
 struct LispBuiltinFuncValue {
 	BuiltinFuncOp* func;
 	LispBuiltinFuncValue(BuiltinFuncOp* _func) { func = _func; }
@@ -23,6 +30,10 @@ struct LispBuiltinFuncValue {
 typedef BNSexprNumber     LispNumValue;
 typedef BNSexprString     LispStringValue;
 typedef BNSexprIdentifier LispIdentifierValue;
+
+struct LispSymbolValue {
+	SubString value;
+};
 
 struct LispBoolValue {
 	bool val;
@@ -47,6 +58,7 @@ struct LispPairValue {
 	mac(LispIdentifierValue) \
 	mac(LispVoidValue) \
 	mac(LispStringValue) \
+	mac(LispSymbolValue) \
 	mac(LispBoolValue) \
 	mac(LispPairValue)
 
@@ -153,18 +165,30 @@ struct LispBinding {
 struct LispEvalContext {
 	Vector<LispValue> evalStack;
 	Vector<LispBinding> bindings;
+	Vector<LispMacro> macros;
 
 	Vector<int> bindingCountFrames;
+	Vector<int> macroCountFrames;
 
 	void PushFrame() {
 		bindingCountFrames.PushBack(bindings.count);
+		macroCountFrames.PushBack(macros.count);
 	}
 
 	void PopFrame() {
-		int prevCount = bindingCountFrames.Back();
-		bindingCountFrames.PopBack();
-		ASSERT(prevCount <= bindings.count);
-		bindings.RemoveRange(prevCount, bindings.count);
+		{
+			int prevCount = bindingCountFrames.Back();
+			bindingCountFrames.PopBack();
+			ASSERT(prevCount <= bindings.count);
+			bindings.RemoveRange(prevCount, bindings.count);
+		}
+
+		{
+			int prevCount = macroCountFrames.Back();
+			macroCountFrames.PopBack();
+			ASSERT(prevCount <= macros.count);
+			macros.RemoveRange(prevCount, macros.count);
+		}
 	}
 
 	LispEvalContext() {
@@ -178,6 +202,15 @@ struct LispEvalContext {
 
 			bindings.PushBack(bind);
 		}
+
+		LispBinding bind;
+		bind.name = "true";
+		bind.value = LispBoolValue(true);
+		bindings.PushBack(bind);
+
+		bind.name = "false";
+		bind.value = LispBoolValue(false);
+		bindings.PushBack(bind);
 	}
 };
 
@@ -201,7 +234,7 @@ LispValue GetBindingForIdentifier(BNSexpr* sexpr, LispEvalContext* ctx) {
 void GetClosureBindings(BNSexpr* funcBody, LispEvalContext* ctx, Vector<LispBinding>* outClosureBindings) {
 	if (funcBody->IsBNSexprIdentifier()) {
 		const SubString& name = funcBody->AsBNSexprIdentifier().identifier;
-		if (name != "begin" && name != "define" && name != "if") {
+		if (name != "begin" && name != "define" && name != "if" && name != "defmacro") {
 			LispValue val = GetBindingForIdentifier(name, ctx);
 			if (!val.IsLispVoidValue()) {
 				LispBinding bind;
@@ -218,9 +251,126 @@ void GetClosureBindings(BNSexpr* funcBody, LispEvalContext* ctx, Vector<LispBind
 	}
 }
 
+LispMacro* GetMacroForSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
+	if (sexpr->IsBNSexprParenList()) {
+		if (sexpr->AsBNSexprParenList().children.count > 0) {
+			if (sexpr->AsBNSexprParenList().children.data[0].IsBNSexprIdentifier()) {
+				const SubString& name = sexpr->AsBNSexprParenList().children.data[0].AsBNSexprIdentifier().identifier;
+				BNS_VEC_FOREACH(ctx->macros) {
+					if (ptr->name == name) {
+						return ptr;
+					}
+				}
+
+				return nullptr;
+			}
+			else {
+				return nullptr;
+			}
+		}
+		else {
+			return nullptr;
+		}
+	}
+	else {
+		return nullptr;
+	}
+}
+
+LispEvalContext defaultCtx;
+
+void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx);
+
+void SexprToValue(BNSexpr* sexpr, LispValue* val) {
+	if (sexpr->IsBNSexprParenList()) {
+		LispBoolValue empty;
+		empty.val = false;
+		*val = empty;
+
+		for (int i = sexpr->AsBNSexprParenList().children.count - 1; i >= 0; i--) {
+			LispPairValue pair;
+			pair.vals.EnsureCapacity(2);
+
+			LispValue head;
+			SexprToValue(&sexpr->AsBNSexprParenList().children.data[i], &head);
+
+			pair.vals.PushBack(head);
+			pair.vals.PushBack(*val);
+			*val = pair;
+		}
+	}
+	else if (sexpr->IsBNSexprIdentifier()) {
+		LispSymbolValue sym;
+		sym.value = sexpr->AsBNSexprIdentifier().identifier;
+		*val = sym;
+	}
+	else {
+		EvalSexpr(sexpr, &defaultCtx);
+		*val = defaultCtx.evalStack.Back();
+		defaultCtx.evalStack.PopBack();
+	}
+}
+
+void ValueToSexpr(LispValue* val, BNSexpr* sexpr) {
+	if (val->IsLispBoolValue()) {
+		// TODO: Dammit
+		BNSexprIdentifier id;
+		static SubString trueId  = STATIC_TO_SUBSTRING("true");
+		static SubString falseId = STATIC_TO_SUBSTRING("false");
+		id = (val->AsLispBoolValue().val ? trueId : falseId);
+	}
+	else if (val->IsLispPairValue()) {
+		BNSexprParenList paren;
+		while (val->IsLispPairValue()) {
+			LispValue* head = &val->AsLispPairValue().vals.data[0];
+			BNSexpr& newSexpr = paren.children.EmplaceBack();
+			ValueToSexpr(head, &newSexpr);
+			val = &val->AsLispPairValue().vals.data[1];
+		}
+
+		*sexpr = paren;
+	}
+	else if (val->IsLispSymbolValue()) {
+		BNSexprIdentifier id;
+		id.identifier = val->AsLispSymbolValue().value;
+		*sexpr = id;
+	}
+	else if (val->IsLispNumValue()) {
+		*sexpr = val->AsLispNumValue();
+	}
+	else if (val->IsLispIdentifierValue()) {
+		ASSERT(false);
+	}
+	else if (val->IsLispStringValue()) {
+		*sexpr = val->AsLispStringValue();
+	}
+}
+
+void ApplyLispMacro(LispMacro* macro, BNSexpr* sexpr, BNSexpr* result, LispEvalContext* ctx) {
+	ASSERT(sexpr->IsBNSexprParenList());
+
+	ctx->PushFrame();
+
+	BNS_VEC_FOREACH(macro->closureBindings) {
+		ctx->bindings.PushBack(*ptr);
+	}
+
+	for (int i = 1; i < sexpr->AsBNSexprParenList().children.count; i++) {
+		LispBinding binding;
+		SexprToValue(&sexpr->AsBNSexprParenList().children.data[i], &binding.value);
+		binding.name = macro->argNames.data[i - 1];
+		ctx->bindings.PushBack(binding);
+	}
+
+	EvalSexpr(&macro->body, ctx);
+
+	ValueToSexpr(&ctx->evalStack.Back(), result);
+
+	ctx->PopFrame();
+}
+
 void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 	if (sexpr->IsBNSexprParenList()) {
-
 		const Vector<BNSexpr>& children = sexpr->AsBNSexprParenList().children;
 		bool specialCase = false;
 		if (children.count > 0) {
@@ -313,65 +463,116 @@ void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 					EvalSexpr(thenExpr, ctx);
 				}
 			}
-		}
-
-		if (!specialCase) {
-			int idx = ctx->evalStack.count;
-			BNS_VEC_FOREACH(sexpr->AsBNSexprParenList().children) {
-				EvalSexpr(ptr, ctx);
-			}
-
-			if (ctx->evalStack.count > idx) {
-				LispValue func = ctx->evalStack.data[idx];
-				if (func.IsLispBuiltinFuncValue()) {
-					LispValue result;
-					func.AsLispBuiltinFuncValue().func(&ctx->evalStack.data[idx + 1], ctx->evalStack.count - idx - 1, &result);
-					ctx->evalStack.RemoveRange(idx, ctx->evalStack.count);
-					ctx->evalStack.PushBack(result);
-				}
-				else if (func.IsLispLambdaValue()) {
-					int arity = func.AsLispLambdaValue().argNames.count;
-					int argCount = ctx->evalStack.count - idx - 1;
-					if (arity == argCount) {
-						int prevCount = ctx->bindings.count;
-
-						// Put closures on first, so args can override them
-						BNS_VEC_FOREACH(func.AsLispLambdaValue().closureBindings) {
-							ctx->bindings.PushBack(*ptr);
+			else if (children.data[0].IsBNSexprIdentifier()
+				&& children.data[0].AsBNSexprIdentifier().identifier == "defmacro") {
+				specialCase = true;
+				const Vector<BNSexpr>& grandChildren = children.data[1].AsBNSexprParenList().children;
+				if (grandChildren.count > 0) {
+					bool allIdentifiers = true;
+					BNS_VEC_FOREACH(grandChildren) {
+						if (!ptr->IsBNSexprIdentifier()) {
+							allIdentifiers = false;
+							break;
 						}
+					}
 
-						for (int i = 0; i < arity; i++) {
-							LispBinding binding;
-							binding.name = func.AsLispLambdaValue().argNames.data[i];
-							binding.value = ctx->evalStack.data[idx + 1 + i];
-							ctx->bindings.PushBack(binding);
+					if (allIdentifiers) {
+						LispMacro macro;
+						macro.name = grandChildren.data[0].AsBNSexprIdentifier().identifier;
+						macro.argNames.EnsureCapacity(grandChildren.count - 1);
+						for (int i = 1; i < grandChildren.count; i++) {
+							macro.argNames.PushBack(grandChildren.data[i].AsBNSexprIdentifier().identifier);
 						}
-
-						ctx->evalStack.RemoveRange(idx, ctx->evalStack.count);
-
-						EvalSexpr(&func.AsLispLambdaValue().body, ctx);
-
-						ctx->bindings.RemoveRange(prevCount, ctx->bindings.count);
+						macro.body = children.data[2];
+						GetClosureBindings(&macro.body, ctx, &macro.closureBindings);
+						ctx->macros.PushBack(macro);
 					}
 					else {
 						ASSERT(false);
 					}
 				}
-				else if (func.IsLispVoidValue()) {
-					printf("Error, unbound identifier\n");
+				else {
+					ASSERT(false);
+				}
+			}
+		}
+
+		if (!specialCase) {
+			if (LispMacro* macro = GetMacroForSexpr(sexpr, ctx)) {
+				BNSexpr newSexpr;
+				ApplyLispMacro(macro, sexpr, &newSexpr, ctx);
+				EvalSexpr(&newSexpr, ctx);
+			}
+			else {
+				int idx = ctx->evalStack.count;
+				BNS_VEC_FOREACH(sexpr->AsBNSexprParenList().children) {
+					EvalSexpr(ptr, ctx);
+				}
+
+				if (ctx->evalStack.count > idx) {
+					LispValue func = ctx->evalStack.data[idx];
+					if (func.IsLispBuiltinFuncValue()) {
+						LispValue result;
+						func.AsLispBuiltinFuncValue().func(&ctx->evalStack.data[idx + 1], ctx->evalStack.count - idx - 1, &result);
+						ctx->evalStack.RemoveRange(idx, ctx->evalStack.count);
+						ctx->evalStack.PushBack(result);
+					}
+					else if (func.IsLispLambdaValue()) {
+						int arity = func.AsLispLambdaValue().argNames.count;
+						int argCount = ctx->evalStack.count - idx - 1;
+						if (arity == argCount) {
+							int prevCount = ctx->bindings.count;
+
+							// Put closures on first, so args can override them
+							BNS_VEC_FOREACH(func.AsLispLambdaValue().closureBindings) {
+								ctx->bindings.PushBack(*ptr);
+							}
+
+							for (int i = 0; i < arity; i++) {
+								LispBinding binding;
+								binding.name = func.AsLispLambdaValue().argNames.data[i];
+								binding.value = ctx->evalStack.data[idx + 1 + i];
+								ctx->bindings.PushBack(binding);
+							}
+
+							ctx->evalStack.RemoveRange(idx, ctx->evalStack.count);
+
+							EvalSexpr(&func.AsLispLambdaValue().body, ctx);
+
+							ctx->bindings.RemoveRange(prevCount, ctx->bindings.count);
+						}
+						else {
+							ASSERT(false);
+						}
+					}
+					else if (func.IsLispVoidValue()) {
+						printf("Error, unbound identifier\n");
+					}
+					else {
+						ASSERT(false);
+					}
 				}
 				else {
 					ASSERT(false);
 				}
 			}
-			else {
-				ASSERT(false);
-			}
 		}
 	}
 	else if (sexpr->IsBNSexprIdentifier()) {
-		LispValue val = GetBindingForIdentifier(sexpr, ctx);
-		ctx->evalStack.PushBack(val);
+		if (sexpr->AsBNSexprIdentifier().identifier.start[0] == '`') {
+			LispValue val;
+			LispSymbolValue sym;
+			sym.value = sexpr->AsBNSexprIdentifier().identifier;
+			// Chop off the quote
+			sym.value.start++;
+			sym.value.length--;
+			val = sym;
+			ctx->evalStack.PushBack(val);
+		}
+		else {
+			LispValue val = GetBindingForIdentifier(sexpr, ctx);
+			ctx->evalStack.PushBack(val);
+		}
 	}
 	else if (sexpr->IsBNSexprNumber()) {
 		LispValue val;
@@ -415,6 +616,9 @@ void PrintLispValue(LispValue* val, FILE* file = stdout) {
 		fprintf(file, " ");
 		PrintLispValue(&val->AsLispPairValue().vals.data[1], file);
 		fprintf(file, ")");
+	}
+	else if (val->IsLispSymbolValue()) {
+		fprintf(file, "`%.*s", BNS_LEN_START(val->AsLispSymbolValue().value));
 	}
 	else {
 		// TODO
