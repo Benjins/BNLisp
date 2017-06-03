@@ -1,5 +1,36 @@
-(define (fac n) (if n (* n (fac (- n 1))) 1))
+(define (fac n) (if (= n 0) 1 (* n (fac (- n 1)))))
 
-(define (fac_f n)(begin (define (fac_i num tot) (if num (fac_i (- num 1) (* num tot)) tot)) (fac_i n 1)))
+(define (fac_f n)(begin (define (fac_i num tot) (if (= num 0) tot (fac_i (- num 1) (* num tot)))) (fac_i n 1)))
 
 (fac_f 12)
+
+(define (sum-list l)
+    (if (list? l)
+	    (+ (car l)
+		   (sum-list (cdr l)))
+		0))
+		
+(define test-list (cons 4 (cons 5 (cons 12 0))))
+
+(define (add1-to-list l)
+	(if (list? l)
+	    (cons (+ 1 (car l))
+		   (add1-to-list (cdr l)))
+		l))
+		
+(define (test-add n)
+	(begin (define (loop l n) (if (= n 0) l (loop (add1-to-list l) (- n 1)))) 
+	       (loop test-list n)))
+		   
+(define (append a b)
+	(if (list? a)
+		(cons (car a)
+			(append (cdr a) b))
+		b))
+		
+(define (stress n) (begin (define (stressi n l) (if (= n 0) l (stressi (- n 1) (append (test-add 100) l)))) (stressi n 0)))
+
+(define (len l)
+	(if (list? l)
+	     (+ 1 (len (cdr l)))
+		 0))

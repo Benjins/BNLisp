@@ -24,8 +24,20 @@ typedef BNSexprNumber     LispNumValue;
 typedef BNSexprString     LispStringValue;
 typedef BNSexprIdentifier LispIdentifierValue;
 
+struct LispBoolValue {
+	bool val;
+
+	LispBoolValue(bool _val = false) {
+		val = _val;
+	}
+};
+
 struct LispVoidValue {
 
+};
+
+struct LispPairValue {
+	Vector<LispValue> vals;
 };
 
 #define DISC_MAC(mac)    \
@@ -34,7 +46,9 @@ struct LispVoidValue {
 	mac(LispNumValue) \
 	mac(LispIdentifierValue) \
 	mac(LispVoidValue) \
-	mac(LispStringValue)
+	mac(LispStringValue) \
+	mac(LispBoolValue) \
+	mac(LispPairValue)
 
 DEFINE_DISCRIMINATED_UNION(LispValue, DISC_MAC)
 
@@ -60,6 +74,20 @@ MATH_BUILTIN_OP(Div, /)
 MATH_BUILTIN_OP(Add, +)
 MATH_BUILTIN_OP(Sub, -)
 
+void MathBuiltin_Equ(LispValue* vals, int count, LispValue* outVal) {
+	ASSERT(count == 2);               
+	ASSERT(vals[0].IsLispNumValue()); 
+	ASSERT(vals[1].IsLispNumValue()); 
+	LispBoolValue res;
+	if (vals[0].AsLispNumValue().isFloat || vals[1].AsLispNumValue().isFloat) {
+		res = vals[0].AsLispNumValue().CoerceDouble() == vals[1].AsLispNumValue().CoerceDouble();
+	}
+	else {
+		res = vals[0].AsLispNumValue().iValue == vals[1].AsLispNumValue().iValue;
+	}
+	*outVal = res;
+}
+
 void StringBuiltin_cmp(LispValue* vals, int count, LispValue* outVal) {
 	ASSERT(count == 2);
 	ASSERT(vals[0].IsLispStringValue());
@@ -67,6 +95,36 @@ void StringBuiltin_cmp(LispValue* vals, int count, LispValue* outVal) {
 	int len = BNS_MIN(vals[0].AsLispStringValue().value.length, vals[1].AsLispStringValue().value.length);
 	LispNumValue num = strncmp(vals[0].AsLispStringValue().value.start, vals[1].AsLispStringValue().value.start, len);
 	*outVal = num;
+}
+
+void Builtin_car(LispValue* vals, int count, LispValue* outVal) {
+	ASSERT(count == 1);
+	ASSERT(vals[0].IsLispPairValue());
+	ASSERT(vals[0].AsLispPairValue().vals.count == 2);
+	*outVal = vals[0].AsLispPairValue().vals.data[0];
+}
+
+void Builtin_cdr(LispValue* vals, int count, LispValue* outVal) {
+	ASSERT(count == 1);
+	ASSERT(vals[0].IsLispPairValue());
+	ASSERT(vals[0].AsLispPairValue().vals.count == 2);
+	*outVal = vals[0].AsLispPairValue().vals.data[1];
+}
+
+void Builtin_cons(LispValue* vals, int count, LispValue* outVal) {
+	ASSERT(count == 2);
+	LispPairValue res;
+	res.vals.EnsureCapacity(2);
+	res.vals.PushBack(vals[0]);
+	res.vals.PushBack(vals[1]);
+
+	*outVal = res;
+}
+
+void Builtin_isList(LispValue* vals, int count, LispValue* outVal) {
+	ASSERT(count == 1);
+	LispBoolValue res = vals[0].IsLispPairValue();
+	*outVal = res;
 }
 
 struct BuiltinBinding {
@@ -79,7 +137,12 @@ BuiltinBinding defaultBindings[] = {
 	{ "/", MathBuiltin_Div },
 	{ "+", MathBuiltin_Add },
 	{ "-", MathBuiltin_Sub },
-	{ "strcmp", StringBuiltin_cmp }
+	{ "=", MathBuiltin_Equ },
+	{ "strcmp", StringBuiltin_cmp },
+	{ "car", Builtin_car  },
+	{ "cdr", Builtin_cdr  },
+	{ "cons", Builtin_cons },
+	{ "list?", Builtin_isList}
 };
 
 struct LispBinding {
@@ -243,7 +306,7 @@ void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 				LispValue ifRes = ctx->evalStack.Back();
 				ctx->evalStack.PopBack();
 
-				if (ifRes.IsLispNumValue() && !ifRes.AsLispNumValue().isFloat && ifRes.AsLispNumValue().iValue == 0) {
+				if (ifRes.IsLispBoolValue() && !ifRes.AsLispBoolValue().val) {
 					EvalSexpr(elseExpr, ctx);
 				}
 				else {
@@ -342,6 +405,16 @@ void PrintLispValue(LispValue* val, FILE* file = stdout) {
 		else {
 			fprintf(file, "%lld", val->AsLispNumValue().iValue);
 		}
+	}
+	else if (val->IsLispBoolValue()) {
+		fprintf(file, "%s", val->AsLispBoolValue().val ? "#t" : "#f");
+	}
+	else if (val->IsLispPairValue()) {
+		fprintf(file, "(cons ");
+		PrintLispValue(&val->AsLispPairValue().vals.data[0], file);
+		fprintf(file, " ");
+		PrintLispValue(&val->AsLispPairValue().vals.data[1], file);
+		fprintf(file, ")");
 	}
 	else {
 		// TODO
