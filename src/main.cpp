@@ -88,14 +88,14 @@ MATH_BUILTIN_OP(Sub, -)
 
 void MathBuiltin_Equ(LispValue* vals, int count, LispValue* outVal) {
 	ASSERT(count == 2);               
-	ASSERT(vals[0].IsLispNumValue()); 
-	ASSERT(vals[1].IsLispNumValue()); 
-	LispBoolValue res;
-	if (vals[0].AsLispNumValue().isFloat || vals[1].AsLispNumValue().isFloat) {
-		res = vals[0].AsLispNumValue().CoerceDouble() == vals[1].AsLispNumValue().CoerceDouble();
-	}
-	else {
-		res = vals[0].AsLispNumValue().iValue == vals[1].AsLispNumValue().iValue;
+	LispBoolValue res = false;
+	if (vals[0].IsLispNumValue() && vals[1].IsLispNumValue()) {
+		if (vals[0].AsLispNumValue().isFloat || vals[1].AsLispNumValue().isFloat) {
+			res = vals[0].AsLispNumValue().CoerceDouble() == vals[1].AsLispNumValue().CoerceDouble();
+		}
+		else {
+			res = vals[0].AsLispNumValue().iValue == vals[1].AsLispNumValue().iValue;
+		}
 	}
 	*outVal = res;
 }
@@ -139,6 +139,15 @@ void Builtin_isList(LispValue* vals, int count, LispValue* outVal) {
 	*outVal = res;
 }
 
+void Builtin_SymbolEqual(LispValue* vals, int count, LispValue* outVal) {
+	ASSERT(count == 2);
+	LispBoolValue res = false;
+	if (vals[0].IsLispSymbolValue() && vals[1].IsLispSymbolValue()) {
+		res = vals[0].AsLispSymbolValue().value == vals[1].AsLispSymbolValue().value;
+	}
+	*outVal = res;
+}
+
 struct BuiltinBinding {
 	const char* name;
 	BuiltinFuncOp* func;
@@ -154,7 +163,8 @@ BuiltinBinding defaultBindings[] = {
 	{ "car", Builtin_car  },
 	{ "cdr", Builtin_cdr  },
 	{ "cons", Builtin_cons },
-	{ "list?", Builtin_isList}
+	{ "list?", Builtin_isList},
+	{"symbol=?", Builtin_SymbolEqual}
 };
 
 struct LispBinding {
@@ -318,6 +328,8 @@ void ValueToSexpr(LispValue* val, BNSexpr* sexpr) {
 		static SubString trueId  = STATIC_TO_SUBSTRING("true");
 		static SubString falseId = STATIC_TO_SUBSTRING("false");
 		id = (val->AsLispBoolValue().val ? trueId : falseId);
+
+		*sexpr = id;
 	}
 	else if (val->IsLispPairValue()) {
 		BNSexprParenList paren;
@@ -619,6 +631,9 @@ void PrintLispValue(LispValue* val, FILE* file = stdout) {
 	}
 	else if (val->IsLispSymbolValue()) {
 		fprintf(file, "`%.*s", BNS_LEN_START(val->AsLispSymbolValue().value));
+	}
+	else if (val->IsLispVoidValue()) {
+		fprintf(file, "#<void>");
 	}
 	else {
 		// TODO
