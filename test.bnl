@@ -40,10 +40,12 @@
 	    (cons (f (car l))
 		      (map (cdr l) f))
 	    l))
+		
+		(define (list a ...) a)
 
 (defmacro (id a) a)
-(defmacro (and a b) (cons `if (cons a (cons b (cons `false 0)))))
-(defmacro (or a b) (cons `if (cons a (cons `true (cons b 0)))))
+(defmacro (and a b) (list `if a b `false))
+(defmacro (or a b) (list `if a `true b))
 
 (defmacro (check x) (if (= x 0) 0 1))
 

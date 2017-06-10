@@ -12,14 +12,24 @@ typedef void (BuiltinFuncOp)(LispValue*, int, LispValue*);
 struct LispLambdaValue {
 	Vector<SubString> argNames;
 	BNSexpr body;
+	bool isVariadic;
 	Vector<LispBinding> closureBindings;
+
+	LispLambdaValue() {
+		isVariadic = false;
+	}
 };
 
 struct LispMacro {
 	SubString name;
 	Vector<SubString> argNames;
+	bool isVariadic;
 	BNSexpr body;
 	Vector<LispBinding> closureBindings;
+
+	LispMacro() {
+		isVariadic = false;
+	}
 };
 
 struct LispBuiltinFuncValue {
@@ -356,6 +366,9 @@ void ValueToSexpr(LispValue* val, BNSexpr* sexpr) {
 	else if (val->IsLispStringValue()) {
 		*sexpr = val->AsLispStringValue();
 	}
+	else {
+		ASSERT(false);
+	}
 }
 
 void ApplyLispMacro(LispMacro* macro, BNSexpr* sexpr, BNSexpr* result, LispEvalContext* ctx) {
@@ -367,11 +380,40 @@ void ApplyLispMacro(LispMacro* macro, BNSexpr* sexpr, BNSexpr* result, LispEvalC
 		ctx->bindings.PushBack(*ptr);
 	}
 
-	for (int i = 1; i < sexpr->AsBNSexprParenList().children.count; i++) {
+	if (macro->isVariadic) {
+		int nonVarArgCount = macro->argNames.count - 1;
+		ASSERT(sexpr->AsBNSexprParenList().children.count - 1 >= nonVarArgCount);
+		for (int i = 1; i <= nonVarArgCount; i++) {
+			LispBinding binding;
+			SexprToValue(&sexpr->AsBNSexprParenList().children.data[i], &binding.value);
+			binding.name = macro->argNames.data[i - 1];
+			ctx->bindings.PushBack(binding);
+		}
+
+		LispValue lastArg;
+		lastArg = LispBoolValue(false);
+		for (int i = nonVarArgCount + 1; i < sexpr->AsBNSexprParenList().children.count; i++) {
+			LispPairValue pair;
+			pair.vals.EnsureCapacity(2);
+			pair.vals.EmplaceBack();
+			pair.vals.EmplaceBack();
+			SexprToValue(&sexpr->AsBNSexprParenList().children.data[i], &pair.vals.data[0]);
+			pair.vals.data[1] = lastArg;
+			lastArg = pair;
+		}
+
 		LispBinding binding;
-		SexprToValue(&sexpr->AsBNSexprParenList().children.data[i], &binding.value);
-		binding.name = macro->argNames.data[i - 1];
+		binding.name = macro->argNames.data[nonVarArgCount];
+		binding.value = lastArg;
 		ctx->bindings.PushBack(binding);
+	}
+	else {
+		for (int i = 1; i < sexpr->AsBNSexprParenList().children.count; i++) {
+			LispBinding binding;
+			SexprToValue(&sexpr->AsBNSexprParenList().children.data[i], &binding.value);
+			binding.name = macro->argNames.data[i - 1];
+			ctx->bindings.PushBack(binding);
+		}
 	}
 
 	LispBinding recurBinding;
@@ -380,6 +422,7 @@ void ApplyLispMacro(LispMacro* macro, BNSexpr* sexpr, BNSexpr* result, LispEvalC
 	val.argNames = macro->argNames;
 	val.closureBindings = macro->closureBindings;
 	val.body = macro->body;
+	val.isVariadic = macro->isVariadic;
 	recurBinding.value = val;
 
 	ctx->bindings.PushBack(recurBinding);
@@ -392,7 +435,7 @@ void ApplyLispMacro(LispMacro* macro, BNSexpr* sexpr, BNSexpr* result, LispEvalC
 		}
 	}
 
-	ASSERT(macroIdx > 0);
+	ASSERT(macroIdx >= 0);
 	SubString macroName = ctx->macros.data[macroIdx].name;
 	ctx->macros.data[macroIdx].name.length = 0;
 
@@ -403,6 +446,17 @@ void ApplyLispMacro(LispMacro* macro, BNSexpr* sexpr, BNSexpr* result, LispEvalC
 	ctx->macros.data[macroIdx].name = macroName;
 
 	ctx->PopFrame();
+}
+
+void LispValuesToList(const LispValue* vals, int count, LispValue* outVal) {
+	LispBoolValue end = false;
+	*outVal = end;
+	for (int i = count - 1; i >= 0; i--) {
+		LispPairValue pair;
+		pair.vals.PushBack(vals[i]);
+		pair.vals.PushBack(*outVal);
+		*outVal = pair;
+	}
 }
 
 void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
@@ -443,6 +497,12 @@ void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 								for (int i = 1; i < grandChildren.count; i++) {
 									val.argNames.PushBack(grandChildren.data[i].AsBNSexprIdentifier().identifier);
 								}
+
+								if (val.argNames.Back() == "...") {
+									val.argNames.PopBack();
+									val.isVariadic = true;
+								}
+
 								val.body = children.data[2];
 								GetClosureBindings(&val.body, ctx, &val.closureBindings);
 								binding.value = val;
@@ -519,6 +579,12 @@ void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 						for (int i = 1; i < grandChildren.count; i++) {
 							macro.argNames.PushBack(grandChildren.data[i].AsBNSexprIdentifier().identifier);
 						}
+
+						if (macro.argNames.Back() == "...") {
+							macro.argNames.PopBack();
+							macro.isVariadic = true;
+						}
+
 						macro.body = children.data[2];
 						GetClosureBindings(&macro.body, ctx, &macro.closureBindings);
 						ctx->macros.PushBack(macro);
@@ -556,7 +622,7 @@ void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 					else if (func.IsLispLambdaValue()) {
 						int arity = func.AsLispLambdaValue().argNames.count;
 						int argCount = ctx->evalStack.count - idx - 1;
-						if (arity == argCount) {
+						if (func.AsLispLambdaValue().isVariadic || arity == argCount) {
 							int prevCount = ctx->bindings.count;
 
 							// Put closures on first, so args can override them
@@ -564,11 +630,29 @@ void EvalSexpr(BNSexpr* sexpr, LispEvalContext* ctx) {
 								ctx->bindings.PushBack(*ptr);
 							}
 
-							for (int i = 0; i < arity; i++) {
+							if (func.AsLispLambdaValue().isVariadic) {
+								int nonVarArgCount = func.AsLispLambdaValue().argNames.count - 1;
+								ASSERT(sexpr->AsBNSexprParenList().children.count - 1 >= nonVarArgCount);
+								for (int i = 1; i <= nonVarArgCount; i++) {
+									LispBinding binding;
+									binding.name = func.AsLispLambdaValue().argNames.data[i]; 
+									binding.value = ctx->evalStack.data[idx + 1 + i];
+									ctx->bindings.PushBack(binding);
+								}
+
 								LispBinding binding;
-								binding.name = func.AsLispLambdaValue().argNames.data[i];
-								binding.value = ctx->evalStack.data[idx + 1 + i];
+								binding.name = func.AsLispLambdaValue().argNames.Back();
+								LispValuesToList(&ctx->evalStack.data[idx + 1 + nonVarArgCount], 
+												 ctx->evalStack.count - idx - nonVarArgCount - 1, &binding.value);
 								ctx->bindings.PushBack(binding);
+							}
+							else {
+								for (int i = 0; i < arity; i++) {
+									LispBinding binding;
+									binding.name = func.AsLispLambdaValue().argNames.data[i];
+									binding.value = ctx->evalStack.data[idx + 1 + i];
+									ctx->bindings.PushBack(binding);
+								}
 							}
 
 							ctx->evalStack.RemoveRange(idx, ctx->evalStack.count);
