@@ -442,6 +442,7 @@ void ApplyLispMacro(LispMacro* macro, BNSexpr* sexpr, BNSexpr* result, LispEvalC
 	EvalSexpr(&macro->body, ctx);
 
 	ValueToSexpr(&ctx->evalStack.Back(), result);
+	ctx->evalStack.PopBack();
 
 	ctx->macros.data[macroIdx].name = macroName;
 
@@ -742,6 +743,9 @@ void PrintLispValue(LispValue* val, FILE* file = stdout) {
 	}
 	else if (val->IsLispVoidValue()) {
 		fprintf(file, "#<void>");
+	}
+	else if (val->IsLispLambdaValue()) {
+		fprintf(file, "#<proc>");
 	}
 	else {
 		// TODO

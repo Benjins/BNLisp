@@ -41,7 +41,7 @@
 		      (map (cdr l) f))
 	    l))
 		
-		(define (list a ...) a)
+(define (list a ...) a)
 
 (defmacro (id a) a)
 (defmacro (and a b) (list `if a b `false))
@@ -54,3 +54,7 @@
 (defmacro (facm a b) (if (symbol=? a b) true (facm b b)))
 
 (defmacro (lenm l) (if (list? l) (+ 1 (lenm (cdr l))) 0))
+
+(defmacro (lambda args body) (list `begin (list `define (cons `__func args) body) `__func))
+
+(defmacro (let let-expr body) (list `begin (list `define (car let-expr) (car (cdr let-expr))) body))
