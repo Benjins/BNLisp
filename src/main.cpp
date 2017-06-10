@@ -374,9 +374,33 @@ void ApplyLispMacro(LispMacro* macro, BNSexpr* sexpr, BNSexpr* result, LispEvalC
 		ctx->bindings.PushBack(binding);
 	}
 
+	LispBinding recurBinding;
+	recurBinding.name = macro->name;
+	LispLambdaValue val;
+	val.argNames = macro->argNames;
+	val.closureBindings = macro->closureBindings;
+	val.body = macro->body;
+	recurBinding.value = val;
+
+	ctx->bindings.PushBack(recurBinding);
+
+	int macroIdx = -1;
+	for (int i = 0; i < ctx->macros.count; i++) {
+		if (ctx->macros.data[i].name == macro->name) {
+			macroIdx = i;
+			break;
+		}
+	}
+
+	ASSERT(macroIdx > 0);
+	SubString macroName = ctx->macros.data[macroIdx].name;
+	ctx->macros.data[macroIdx].name.length = 0;
+
 	EvalSexpr(&macro->body, ctx);
 
 	ValueToSexpr(&ctx->evalStack.Back(), result);
+
+	ctx->macros.data[macroIdx].name = macroName;
 
 	ctx->PopFrame();
 }
