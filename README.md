@@ -14,8 +14,8 @@ TODO:
  - Better error handling (instead of just asserting)
  - Make it embeddable, usable as scripting lang?
  - Better macro system, quoting
- - Better list handling
- - Variadic functions
- - Type checking (check if something is a number, string, etc.)
+ - ~~Better list handling~~
+ - ~~Variadic functions~~
+ - Type checking (runtime, check if something is a number, string, etc.)
  - User-defined structs
  - Efficiency, optimisation, less memory
